@@ -1,0 +1,9 @@
+float64 path_angle 
+float64 rotation_angle
+float64[] displacement
+float64[] path_projection
+float64[] bend_direction
+---
+float64 total_rotation
+---
+float64 rotation_angle

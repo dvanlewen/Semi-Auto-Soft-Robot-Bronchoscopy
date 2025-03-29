@@ -1,0 +1,11 @@
+float64 path_angle 
+int64 n_steps
+float64[] path_projection
+float64[] bend_direction
+---
+geometry_msgs/Point tip_pose
+int64 steps
+---
+float64 angle_feedback
+float64 distance
+float64 pressure

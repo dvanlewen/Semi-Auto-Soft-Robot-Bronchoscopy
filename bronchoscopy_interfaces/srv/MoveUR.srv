@@ -1,0 +1,5 @@
+float64 rotation
+float64 translate_x
+float64 translate_z
+---
+float64[] new_pose

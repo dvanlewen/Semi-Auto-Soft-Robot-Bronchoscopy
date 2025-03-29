@@ -1,0 +1,7 @@
+int64 n_path_points 
+float64[] bend_direction
+float64[] path_projection
+---
+float64 rotation
+float64 distance_x
+float64 distance_y

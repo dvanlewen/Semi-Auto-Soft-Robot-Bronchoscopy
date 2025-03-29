@@ -1,0 +1,6 @@
+bool steering
+---
+float64 pressure
+float64[] tip_position_baseframe
+float64[] tip_orientation_baseframe
+float64 bend_angle
