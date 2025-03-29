@@ -2,6 +2,9 @@
 
 This repository contains ROS2 packages for controlling a semi-autonomous soft robot designed for bronchoscopy procedures. The robot can be controlled semi-autonomously or via teleoperation using the `joy` package for ROS2. The project includes custom ROS2 interface messages, services, and actions, and is designed to run on Windows 11 with ROS2 Iron.
 
+This work has been published in IEEE Robotics and Automation Letters:
+
+Van Lewen et al., "A Real-Time, Semi-Autonomous Navigation Platform for Soft Robotic Bronchoscopy", IEEE Robotics and Automation Letters, 2025. [Link](https://ieeexplore.ieee.org/document/10937746)
 ## Features
 
 - **Semi-Autonomous Control**: Implementing advanced algorithms to assist in bronchoscopy procedures.
