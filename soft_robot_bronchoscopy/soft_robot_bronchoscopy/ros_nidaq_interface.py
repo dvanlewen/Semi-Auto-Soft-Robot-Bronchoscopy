@@ -1,5 +1,5 @@
 """
-Node for interfacing with stepper and pressure regulator connected to NI DAQ
+Node for interfacing with stepper motor and pressure regulator connected to NI DAQ
 """
 import rclpy
 from rclpy.node import Node
@@ -8,7 +8,6 @@ from nidaqmx.constants import LineGrouping
 import time
 from bronchoscopy_interfaces.msg import DaqInput
 from bronchoscopy_interfaces.srv import SensePressure
-import closedloop_steering
 from bronchoscopy_interfaces.msg import DaqOutput
 import numpy as np
 
@@ -16,11 +15,8 @@ class Stepper:
 
     def __init__(self):
         self.stepper_out = nidaqmx.Task()
-        #self.dir_out = nidaqmx.Task()
         port = 'Dev1/port1/line0:1'
-        #port2 = 'Dev2/port1/line1'
         self.stepper_out.do_channels.add_do_chan(port, line_grouping=LineGrouping.CHAN_PER_LINE)
-        #self.dir_out.do_channels.add_do_chan(port2, line_grouping=LineGrouping.CHAN_PER_LINE)
         self.stepper_out.start()
         self.stepper_pos = 0
 
@@ -51,7 +47,7 @@ class Stepper:
         self.stepper_out.close()
 
 
-UNIT_PRESSURE = 0.025  # in V, corresponds to 1 kpa
+UNIT_PRESSURE = 0.025  # in Volts, corresponds to 1 kpa (for SMC ITV0030-2S regulator)
 class pressure_pumps:
 
     def __init__(self):
@@ -62,10 +58,7 @@ class pressure_pumps:
         self.press_readout.ai_channels.add_ai_voltage_chan(port_out, terminal_config=nidaqmx.constants.TerminalConfiguration(10083))
         self.press_in.ao_channels.add_ao_voltage_chan(port_in)
 
-        #self.press_in.start()
-        #self.press_readout.start()
-
-        # From ITV0030-2N Datasheet
+        # From ITV0030-2S Datasheet
         self.vMin = 0
         self.vMax = 5
         self.readvMin = 1
@@ -95,11 +88,11 @@ class pressure_pumps:
 
     def set_pressure(self, pressure_input):
         """
-        Inputs a set pressure to regulators
+        Inputs a set pressure to regulator
         """
         self.volt_in = pressure_input * (self.vMax - self.vMin)/(self.pMax - 0)
 
-        if self.volt_in < 0:  #self.vMin + UNIT_PRESSURE:
+        if self.volt_in < 0:
             raise ValueError('VOLTAGE IS TOO LOW')
         if self.volt_in > self.vMax - 50 * UNIT_PRESSURE:
             raise ValueError('VOLTAGE IS TOO HIGH')
@@ -107,9 +100,7 @@ class pressure_pumps:
 
     def log_pressure(self):
         v_sense = self.press_readout.read()
-        #pressure_voltage.append(v_sense)
         p_sense = ((self.pMax - 0) / (self.readvMax - self.readvMin)) * (v_sense - self.readvMin)
-        #pressure_data.append(p_sense)
         return v_sense, p_sense
 
     def pressure_pumps_close(self):
@@ -118,9 +109,11 @@ class pressure_pumps:
         self.press_in.close()
 
 def cc_predict(total_pressure):
+    """
+    Calculates bending angle and tip position relative to base using constant curvature assumption
+    """
     L = 35
     if total_pressure > 40:
-        #total_bending_angle = (0.0007*total_pressure**2 + (-0.0527) * total_pressure + 0.8351)
         total_bending_angle = 0.6675*np.exp(0.02116*total_pressure)
     else:
         total_bending_angle = 0
@@ -160,7 +153,7 @@ class DaqInterface(Node):
         self.get_logger().info(str(msg.contour_distance))
         self.cont_dist[0] = msg.contour_distance[0]
         self.cont_dist[1] = msg.contour_distance[1]
-        if self.cont_dist != [0,0] and pressure == 0:
+        if self.cont_dist != [0,0] and pressure == 0:  # Maintains constant bend angle while inserting
             _, sensed_p = self.regulator.log_pressure()
             pressure = sensed_p
             apply_pressure = False
@@ -182,7 +175,7 @@ class DaqInterface(Node):
             self.regulator.set_pressure(pressure)
             _, sensed_p = self.regulator.log_pressure()
             self.get_logger().info('Pressurizing to ' + str(sensed_p) + 'kPa')
-            self.publish_pressure()
+            self.publish_pressure()  # publish pressure to data logger node after it is set
 
     def publish_pressure(self):
         """
