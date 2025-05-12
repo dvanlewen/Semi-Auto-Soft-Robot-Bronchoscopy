@@ -170,31 +170,20 @@ class Localization(Node):
 
         # create publisher for points projected in camera
         self.publisher = self.create_publisher(Path, 'projection_points', 10)
-        #self.timer = self.create_timer(0.5, self.pub_points)
         self.points_2d = np.array([200, 200])
 
         # This rotation is currently used only in feedback callback as of 7/8/24
         config = load_config('C:\\Users\\Daniel\\Desktop\\Soft-Robot-Bronchoscopy\\utilities\\config.yaml')
         R_base2tip_static = [config['tracker2camera'][0], config['tracker2camera'][1],config['tracker2camera'][2]]
-        # R_base2tip_static = [[-0.57078967, -0.81704512, 0.08146426],
-        #                      [0.8209157, -0.56576767, 0.07748787],
-        #                      [-0.01722124, 0.11110457, 0.9936595]]
         Rot2q = np.append(R_base2tip_static, [[0], [0], [0]], axis=1)
         R_base2tip_static = np.append(Rot2q, [[0, 0, 0, 1]], axis=0)
         self.q_base2tip_static = quaternion_from_matrix(R_base2tip_static)
         self.q_tip2base_static = quaternion_inverse(self.q_base2tip_static)
-        # R_base2Arm = np.linalg.inv(np.array([[0.0082784, -0.02034058, 0.99975884],
-        #                                      [0.99352786, 0.11343441, -0.00591893],
-        #                                      [-0.11328666, 0.99333725, 0.02114799]]))  #REPLACE: [1, 0, 0][0, 0, -1][0,1,0]with matrix derived from initialize_axes.py
         self.R_base2Arm = np.linalg.inv(np.array(config['robot2tracker'],dtype=np.float64))
 
         #bend_dir = np.array([-0.99796941, 0.06369506])  # bending direction vector in camera frame (pixels) from steering_direction_test.py
         self.bend_dir = np.array(config['bendDir_unit'],dtype=np.float64)
         self.branch_idxs = np.array(config[loadpath],dtype=np.float64)
-        #branch_idxs = [14, 15, 30, 31, 32, 33]  #Left4 #[14, 15, 38, 39, 41, 42]  #Left5 #[14, 15, 25, 26]  #UpRight1 # [29,30]  #BotRight  
-        # create publisher (maybe change to action client) for ur5e
-        #self.ur_publisher = self.create_publisher(Twist, 'UR5e_motion', 10)
-        #self.daq_pub = self.create_publisher(DaqInput, 'daq_input', 10)
 
         # create action client for steering
         self.action_client = ActionClient(self, Steer, 'steer')
@@ -212,7 +201,6 @@ class Localization(Node):
 
     def base_pose_callback(self, msg):
         global steering_goal
-        #config = load_config('config.yaml')
         from_frame_rel = self.target_frame
         to_frame_rel = 'base'
         try:
@@ -244,7 +232,6 @@ class Localization(Node):
         base_pos_pframe = [msg.poses[0].position.x, msg.poses[0].position.y, msg.poses[0].position.z]
         base_ori_pframe = msg.poses[0].orientation
         self.tip_pos_pframe = [msg.poses[1].position.x, msg.poses[1].position.y, msg.poses[1].position.z]  #modified for tip probe
-        #self.get_logger().info('Tip Pose: ' + str(tip_pos_pframe))
 
         # Begin High Level Control
         # Determine closest points on path to the robot
@@ -271,9 +258,9 @@ class Localization(Node):
         path_dir_tipyz = rotate_vector_by_q(q_bendyz, path_dir_tipyz)
         path_dir_yztipproj = [path_dir_tipyz[1], path_dir_tipyz[2]]  # x component in tip should be zero
         target_bend_angle = np.arctan2(1 * path_dir_yztipproj[0] - 0 * path_dir_yztipproj[1], 0 * path_dir_yztipproj[0] + 1 * path_dir_yztipproj[1])
-
         print('Rotation Angle: ', target_rotation_angle)
-        nPathPoints = 30
+        
+        nPathPoints = 30  # number of points to project onto camera frame
         path_pt = 25
         if ind+nPathPoints > len(self.path):
             vis_pts_on_path = self.path[ind:len(self.path)-1, :]
@@ -283,7 +270,6 @@ class Localization(Node):
             path_pt = 25
 
         # Use current tip orientation to define rotation and translation
-        #self.teleop_on = True
         trans = np.zeros(np.shape(vis_pts_on_path))
         points_tipframe = np.zeros(np.shape(vis_pts_on_path))
         points_2d_1 = np.zeros((nPathPoints,2))
@@ -292,20 +278,23 @@ class Localization(Node):
             points_tipframe[i] = rotate_vector_by_q(q_patient2tip, trans[i])  # above push could be done after transform but z-axis is roughly same in both frames
             points_2d_1[i,0] = (points_tipframe[i,0] * intrinsic[0,0])/points_tipframe[i,2] + intrinsic[0,2]
             points_2d_1[i,1] = (points_tipframe[i,1] * intrinsic[1,1])/points_tipframe[i,2] + intrinsic[1,2]
+        
+        ## Redundant section used for comparison with OpenCV projection method
         R_patient2tip = quaternion_matrix(quaternion_inverse(q_patient2tip))[:3, :3]
         rotV, _ = cv2.Rodrigues(R_patient2tip[:3][:3])
         rvec = rotV
-        #tvec = vis_pts_on_path[0] - tip_pos_pframe
         rotated_tip = rotate_vector_by_q(q_patient2tip, self.tip_pos_pframe)
-        tvec = np.array(self.tip_pos_pframe)  #tip_pos_pframe  remove and replace rotated_tip
-        points_3d = points_tipframe  #-vis_pts_on_path
+        tvec = np.array(self.tip_pos_pframe)
+        points_3d = points_tipframe
         # Map the 3D path to 2D path projected on camera frame
         points_2d, _ = cv2.projectPoints(points_3d, np.zeros((3,1)), np.zeros((3,1)), intrinsic, dist_coeffs)
+        ## End redundant section
+        
         # Publish projection points to be used by camera node
         points = Path()
         p_array = []
         p2_array = []
-        #print(points_2d)
+
         for i in range(len(points_2d_1)):
             p = points_2d_1[i][0]
             #p = points_2d[i][0][0]
@@ -313,17 +302,18 @@ class Localization(Node):
             #p2 = points_2d[i][0][1]
             p_array.append(p)
             p2_array.append(p2)
-        points.path_point_x = p_array  # points_tipframe[:][0]
+        points.path_point_x = p_array
         points.path_point_y = p2_array
         points.tip_index = ind
         points.base_index = base_ind
         self.publisher.publish(points)
         print('Index: ', ind)
         print('Targ Angle:', target_bend_angle)
+
         if not self.teleop_on:
             # Begin Semi-Auto Low Level Control
             ur5e_goal = Arm.Goal()
-            print('Dist: ', dist) #'Tip', self.tip_pos_pframe)
+            print('Dist: ', dist)
             if abs(target_bend_angle) > 0.05 and not self.aligned and ind in self.branch_idxs and dist < 50:
                 # Robot will go through alignment logic before continuing forward
                 # Send request to UR5e controller action to rotate robot
@@ -345,12 +335,12 @@ class Localization(Node):
                 steering_goal.bend_direction = self.bend_dir
 
                 # Send steering action once bending direction is within rotation alignment threshold
-                # if not self.action_sent and abs(self.rotation_feedback) < 0.2:
-                #     self.get_logger().info('Bending')
-                #     self.action_client.wait_for_server()
-                #     self._send_goal_future = self.action_client.send_goal_async(steering_goal, feedback_callback=self.feedback_callback)
-                #     self._send_goal_future.add_done_callback(self.goal_response_callback)
-                #     self.action_sent = True
+                if not self.action_sent and abs(self.rotation_feedback) < 0.2:
+                    self.get_logger().info('Bending')
+                    self.action_client.wait_for_server()
+                    self._send_goal_future = self.action_client.send_goal_async(steering_goal, feedback_callback=self.feedback_callback)
+                    self._send_goal_future.add_done_callback(self.goal_response_callback)
+                    self.action_sent = True
 
             else:
                 # Robot will align with path in plane of tip and move forward
@@ -383,11 +373,11 @@ class Localization(Node):
                     next_pt = self.path[base_ind+1, :]
                 dist2nextpt = next_pt - base_pos_pframe
                 dist2nextpt = np.sqrt((next_pt[0] - base_pos_pframe[0])**2 + (next_pt[1] - base_pos_pframe[1])**2 + (next_pt[2] - base_pos_pframe[2])**2)
-                distperstep = 1  # change this based on gear size
+                distperstep = 1
                 n_steps = int(dist2nextpt/distperstep)
                 if not self.step_action_sent and (self.rotation_feedback == 100 or abs(self.rotation_feedback) < 0.2):
                     step_goal = Steer.Goal()
-                    step_goal.n_steps = 1  #n_steps
+                    step_goal.n_steps = 1
                     self.get_logger().info('Inserting: ' + str(n_steps))
                     self.action_client.wait_for_server()
                     self._send_goal_future = self.action_client.send_goal_async(step_goal, feedback_callback=self.feedback_callback)
@@ -423,6 +413,9 @@ class Localization(Node):
                 self.arm_action_sent = False
 
     def goal_response_callback(self, future):
+        """
+        Checks status of action request sent to ros_steering node for insertion or steering DOFs
+        """
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().info('Goal rejected :(')
@@ -435,6 +428,9 @@ class Localization(Node):
         self._get_result_future.add_done_callback(self.get_result_callback)
 
     def arm_goal_response_callback(self, future):
+        """
+        Checks status of action request sent to ros_ur5e_controller node for arm rotation/translation
+        """
         goal_handle = future.result()
         if not goal_handle.accepted:
             self.get_logger().info('UR5e goal rejected')
@@ -445,6 +441,9 @@ class Localization(Node):
         self._get_result_future.add_done_callback(self.get_arm_result_callback)
 
     def get_result_callback(self, future):
+        """
+        Returns when ros_steering is finished, either inserting or steering
+        """
         result = future.result().result.tip_pose
         self.action_sent = False
         if future.result().result.steps != 0:
@@ -462,6 +461,9 @@ class Localization(Node):
             self.get_logger().info('Projection Index: ' + str(self.proj_ind))
 
     def get_arm_result_callback(self, future):
+        """
+        Returns when ros_ur5e_controller is finished, either rotating or translating
+        """
         global steering_goal
         result = future.result().result.total_rotation
         status = future.result().status
@@ -482,12 +484,6 @@ class Localization(Node):
             else:
                 # Send steering action once bending direction is within rotation alignment threshold
                 if not self.action_sent:
-                    # step_goal = Steer.Goal()
-                    # step_goal.n_steps = 5
-                    # self.get_logger().info('Inserting')
-                    # self.action_client.wait_for_server()
-                    # self._send_goal_future = self.action_client.send_goal_async(step_goal, feedback_callback=self.feedback_callback)
-
                     self.get_logger().info('Bending: ' + str(steering_goal.path_angle))
                     self.action_client.wait_for_server()
                     self._send_goal_future = self.action_client.send_goal_async(steering_goal, feedback_callback=self.feedback_callback)
@@ -498,6 +494,9 @@ class Localization(Node):
             self.arm_action_sent = False
 
     def feedback_callback(self, feedback_msg):
+        """
+        Receives feedback from ros_steering
+        """
         self.get_logger().info('Receiving steering feedback')
         self.get_logger().info('Remaining distance: ' + str(feedback_msg.feedback.distance) + '  Bend Angle Estimation: ' + str(feedback_msg.feedback.angle_feedback))
         self.get_logger().info('Pressure: ' + str(feedback_msg.feedback.pressure))
@@ -509,6 +508,9 @@ class Localization(Node):
         q_patient2tip = quaternion_multiply(q_base2tip, quaternion_inverse(self.q_base2patient))
 
     def arm_feedback_callback(self, feedback_msg):
+        """
+        Receives feedback from ros_ur5e_controller
+        """
         self.rotation_feedback = feedback_msg.feedback.rotation_angle
         self.get_logger().info('Remaining rotation:' + str(self.rotation_feedback))
 
