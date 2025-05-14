@@ -12,7 +12,7 @@ from bronchoscopy_interfaces.msg import DaqOutput, Tracker
 import pandas as pd
 from scipy import spatial
 
-
+# Load lung path boundaries
 Bx = pd.read_csv("C:\\Users\\Daniel\\Desktop\\Soft-Robot-Bronchoscopy\\utilities\\Bx_BotRight.csv").values
 By = pd.read_csv("C:\\Users\\Daniel\\Desktop\\Soft-Robot-Bronchoscopy\\utilities\\By_BotRight.csv").values
 Bz = pd.read_csv("C:\\Users\\Daniel\\Desktop\\Soft-Robot-Bronchoscopy\\utilities\\Bz_BotRight.csv").values
@@ -169,16 +169,12 @@ class TrackerPub(Node):
         config = load_config('C:\\Users\\Daniel\\Desktop\\Soft-Robot-Bronchoscopy\\utilities\\config.yaml')
 
         # Rotation from tracker frame to camera frame from initialize_axes.py
-        # R_base2tip_static = [[-0.57078967, -0.81704512, 0.08146426],
-        #                      [0.8209157, -0.56576767, 0.07748787],
-        #                      [-0.01722124, 0.11110457, 0.9936595]]
         R_base2tip_static = [config['tracker2camera'][0], config['tracker2camera'][1],config['tracker2camera'][2]]
         Rot2q = np.append(R_base2tip_static, [[0], [0], [0]], axis=1)
         R_base2tip_static = np.append(Rot2q, [[0, 0, 0, 1]], axis=0)
         self.q_base2tip_static = quaternion_from_matrix(R_base2tip_static)
         self.q_tip2base_static = quaternion_inverse(self.q_base2tip_static)
         # Rotation from bending direction in virtual tip frame to camera frame
-        #self.bend_dir = [-0.99796941, 0.06369506]
         self.bend_dir = np.array(config['bendDir_unit'])
         xaxis2bend_dir = np.arctan2(0 * self.bend_dir[0] - 1 * self.bend_dir[1], self.bend_dir[0] * 1 + self.bend_dir[1] * 0)
         #R_bend2tip = rotation([0, 1, 0], [self.bend_dir[0], self.bend_dir[1], 0])  # finds rotation between bend direction and +y direction for CC tip prediction
@@ -186,23 +182,12 @@ class TrackerPub(Node):
         #R_bend2tip = np.append(Rotb2q, [[0, 0, 0, 1]], axis=0)
         self.q_bend2tip = [np.sin(xaxis2bend_dir/2)*0, np.sin(xaxis2bend_dir/2)*0, np.sin(xaxis2bend_dir/2)*1, np.cos(xaxis2bend_dir/2)]  #quaternion_from_matrix(R_bend2tip)
 
-        # create service client for pressure feedback
-        #self.pressure_cli = self.create_client(SensePressure, 'sense_pressure')
-        #while not self.pressure_cli.wait_for_service(timeout_sec=1.0):
-        #    self.get_logger().info('service not available, waiting again...')
-        #self.pressure_req = SensePressure.Request()
+        # create subscriber for pressure feedback/ tip pose estimation
         self.subscriber = self.create_subscription(DaqOutput, 'pressure', self.collect_pressure, 10)
         self.bend_pressure = 0
         self.tip_pos_bframe = [0, 0, 35]
         self.tip_ori_bframe = [0, 0, 0]
         self.bend_angle = 0
-
-    #def send_pressure_request(self, a):
-    #    self.pressure_req.steering = a
-    #    self.p_future = self.pressure_cli.call_async(self.pressure_req)
-    #    # 4/12 localization gets stuck here
-    #    rclpy.spin_until_future_complete(self, self.p_future)
-    #    return self.p_future.result()
 
     def findPose(self):
         msg = PoseArray()
@@ -213,15 +198,17 @@ class TrackerPub(Node):
         base_pos = np.squeeze(base_pos, axis=(2,))
         base_pos = np.squeeze(base_pos, axis=(1,)).tolist()
 
+        # Publish tracker error measured by NDI Aurora system for data collection
         error_msg = Tracker()
         error_msg.tracker_errors = tracker_error
         self.error_pub.publish(error_msg)
 
         base.position.x = base_pos[0]
         base.position.y = base_pos[1]
-        base.position.z = base_pos[2]  # Can also edit AuroraRegistration.py to output quaternions
+        base.position.z = base_pos[2]
 
-        R_base2patient = self.Tracker.ROTXM2 @ self.Tracker.XYZ_ROT_in_Ref_Disc
+        # Calculate rotation matrix from reference disk frame to patient frame
+        #R_base2patient = self.Tracker.ROTXM2 @ self.Tracker.XYZ_ROT_in_Ref_Disc
         Rot2q2 = np.append(self.Tracker.XYZ_ROT_in_Ref_Disc, [[0], [0], [0]], axis=1)
         R_REF = np.append(Rot2q2, [[0, 0, 0, 1]], axis=0)
         ref_q = quaternion_from_matrix(R_REF)
@@ -229,9 +216,8 @@ class TrackerPub(Node):
         R_lung = np.append(Rot2q3, [[0, 0, 0, 1]], axis=0)
         lung_q = quaternion_from_matrix(R_lung)
         base_q = quaternion_multiply(lung_q, ref_q)
-        print(R_base2patient @ [0,0,5])
-        Rot2q = np.append(R_base2patient, [[0], [0], [0]], axis=1)
-        R_base2patient = np.append(Rot2q, [[0, 0, 0, 1]], axis=0)
+        #Rot2q = np.append(R_base2patient, [[0], [0], [0]], axis=1)
+        #R_base2patient = np.append(Rot2q, [[0, 0, 0, 1]], axis=0)
         #base_q = quaternion_from_matrix(R_base2patient)
         #base_q = quaternion_multiply([0,0,1,0], base_q)
         #base_q = quaternion_multiply([1,0,0,0], base_q)
@@ -254,6 +240,7 @@ class TrackerPub(Node):
         t.transform.rotation.w = base_q[3]
         self.tf_broadcaster.sendTransform(t)
         # Localize tip based on constant curvature calculations
+        # Calculate axis of rotation when bending within the camera frame
         bend_axis = np.cross([self.bend_dir[0],self.bend_dir[1],0],[0,0,-1])
         # if self.bend_pressure > 40:
         #     self.bend_angle = self.bend_angle * 0.9
@@ -316,12 +303,7 @@ class TrackerPub(Node):
         #####################################################################
 
         q_patient2tip = quaternion_multiply(self.q_base2tip_static, quaternion_inverse(self.q_base2patient))  #use below for base EM probe
-        q_patient2bend = quaternion_multiply(quaternion_inverse(q_bend), q_patient2tip)  #rotate_vector_by_q(q_base2tip, quaternion_inverse(self.q_base2patient))
-        # Note: if bend_angle is 0, the next 3 lines are redundant,
-        # q_patient2bend = quaternion_multiply(quaternion_inverse(self.q_bend2tip),q_patient2cam)  #out for tip probe
-        # q_patient2bent = quaternion_multiply(q_bend, q_patient2bend)  #out for tip probe
-        # q_patient2tip = quaternion_multiply(self.q_bend2tip, q_patient2bent)  #out for tip probe
-        #q_patient2tip = quaternion_multiply(q_patient2tip, [0, 0, 1, 0])  #commented out for tip probe  # might need this?, rotates 180 deg about z-axis for path alignment?
+        q_patient2bend = quaternion_multiply(quaternion_inverse(q_bend), q_patient2tip)
         tip.orientation.x = q_patient2bend[0]
         tip.orientation.y = q_patient2bend[1]
         tip.orientation.z = q_patient2bend[2]
